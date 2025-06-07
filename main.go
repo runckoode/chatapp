@@ -115,7 +115,7 @@ func serveWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
 		roomID := hub.createRoom(client)
 		client.Send <- "WELCOME! Your room ID is: " + roomID
 	} else if role == "admin" {
-		client.Send <- "WELCOME ADMIN"
+		client.Send <- "Conectado... oh admin"
 	} else {
 		conn.WriteMessage(websocket.TextMessage, []byte("ERROR: Unknown role"))
 		conn.Close()
