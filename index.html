@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>ChatApp Cliente</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gradient-to-br from-sky-100 to-indigo-200 min-h-screen flex flex-col items-center">
+  <main class="w-full max-w-lg mt-10 bg-white rounded-2xl shadow-xl p-6 flex flex-col gap-4">
+    <h2 class="text-3xl font-extrabold text-indigo-700 flex items-center gap-2 select-none">
+      <svg class="w-7 h-7 text-indigo-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path d="M8 10h.01M12 10h.01M16 10h.01M21 12c0 4.418-4.03 8-9 8s-9-3.582-9-8 4.03-8 9-8 9 3.582 9 8z"/>
+      </svg>
+      ChatApp Cliente
+    </h2>
+    <div id="status" class="text-sm text-gray-500">Desconectado</div>
+    <section id="chat" class="w-full h-80 border rounded-xl bg-gray-50 p-3 mb-2 overflow-y-auto text-sm flex flex-col gap-1"></section>
+    <form id="form" class="flex gap-2">
+      <input id="input" type="text" autocomplete="off" placeholder="Escribe tu mensaje..."
+        class="flex-1 border border-indigo-200 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-indigo-400 transition"
+        disabled />
+      <button id="send" type="submit"
+        class="bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-semibold rounded-lg px-5 py-2 transition
+        shadow hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-indigo-400"
+        disabled>
+        Enviar
+      </button>
+    </form>
+  </main>
+  <script>
+    const chat = document.getElementById('chat');
+    const input = document.getElementById('input');
+    const sendBtn = document.getElementById('send');
+    const status = document.getElementById('status');
+    const form = document.getElementById('form');
+    let ws = null, isTyping = false;
+    const ROOM_KEY = "chatapp_room_id";
+
+    const renderMsg = (msg, type = "") => {
+      const base = "px-3 py-2 rounded-lg my-1 max-w-[80%] break-words shadow transition";
+      const cls = {
+        admin: "bg-indigo-100 text-indigo-900 self-start animate-fade-in",
+        client: "bg-green-100 text-green-900 self-end animate-fade-in",
+        system: "bg-gray-200 text-gray-600 text-xs text-center w-full",
+        typing: "bg-indigo-50 text-indigo-400 italic self-start animate-pulse",
+      };
+      return `<div class="flex ${type === "client" ? "justify-end" : "justify-start"}">
+        <span class="${base} ${cls[type] || cls.system}">${msg}</span>
+      </div>`;
+    };
+
+    const appendMsg = (msg, type) => {
+      chat.innerHTML += renderMsg(msg, type);
+      chat.scrollTop = chat.scrollHeight;
+    };
+
+    function simulateAdminTyping(fullMsg) {
+      if (isTyping) return;
+      isTyping = true;
+
+      // Elimina cualquier burbuja de typing anterior
+      const prevTyping = document.getElementById("typing-bubble");
+      if (prevTyping) prevTyping.remove();
+
+      // Crea la burbuja de typing
+      let typingDiv = document.createElement("div");
+      typingDiv.id = "typing-bubble";
+      typingDiv.className = "flex justify-start";
+      typingDiv.innerHTML = `<span class="px-3 py-2 rounded-lg my-1 max-w-[80%] break-words shadow bg-indigo-50 text-indigo-400 italic self-start animate-pulse"></span>`;
+      chat.appendChild(typingDiv);
+      chat.scrollTop = chat.scrollHeight;
+
+      let shown = "", idx = 0;
+      const typingSpeed = 20;
+      const typingSpan = typingDiv.querySelector("span");
+      const typeStep = () => {
+        if (idx < fullMsg.length) {
+          shown += fullMsg[idx++];
+          typingSpan.innerHTML = `El admin está escribiendo...<br><b>${shown}</b>`;
+          chat.scrollTop = chat.scrollHeight;
+          setTimeout(typeStep, typingSpeed + Math.random() * 50);
+        } else {
+          typingDiv.remove();
+          appendMsg(fullMsg, "admin");
+          isTyping = false;
+        }
+      };
+      setTimeout(typeStep, 500);
+    }
+
+    function connect() {
+      ws = new WebSocket("ws://localhost:8080/ws");
+      status.textContent = "Conectando...";
+      ws.onopen = () => {
+        status.textContent = "Conectado";
+        ws.send("client");
+        ws.send("password");
+        const savedRoom = localStorage.getItem(ROOM_KEY);
+        if (savedRoom) {
+          ws.send("RESTORE_ROOM:" + savedRoom);
+          appendMsg("Intentando restaurar la sesión...", "system");
+        }
+        input.disabled = false;
+        sendBtn.disabled = false;
+        appendMsg("Conectado al servidor. Esperando al admin...", "system");
+      };
+      ws.onmessage = (evt) => {
+        const msg = evt.data;
+        if (msg.startsWith("WELCOME! Your room ID is: ")) {
+          const roomId = msg.split("WELCOME! Your room ID is: ")[1];
+          localStorage.setItem(ROOM_KEY, roomId);
+          appendMsg("Tu sesión ha sido guardada. Room ID: " + roomId, "system");
+        } else if (msg.startsWith("[ADMIN]:")) {
+          simulateAdminTyping(msg.replace("[ADMIN]: ", ""));
+        } else if (msg.startsWith("[CLIENT]:")) {
+          appendMsg(msg.replace("[CLIENT]: ", ""), "client");
+        } else if (msg.startsWith("RESTORED_ROOM:")) {
+          appendMsg("Sesión restaurada correctamente.", "system");
+        } else {
+          appendMsg(msg, "system");
+        }
+      };
+      ws.onclose = () => {
+        status.textContent = "Desconectado";
+        input.disabled = true;
+        sendBtn.disabled = true;
+        appendMsg("Desconectado del servidor", "system");
+      };
+      ws.onerror = () => {
+        status.textContent = "Error de conexión";
+        appendMsg("Error de conexión", "system");
+      };
+    }
+
+    form.onsubmit = (e) => {
+      e.preventDefault();
+      sendMessage();
+    };
+    input.onkeydown = e => { if (e.key === "Enter") sendMessage(); };
+    function sendMessage() {
+      const msg = input.value.trim();
+      if (msg && ws && ws.readyState === 1) {
+        ws.send(msg);
+        appendMsg(msg, "client");
+        input.value = "";
+      }
+    }
+
+    window.onload = connect;
+
+    const style = document.createElement('style');
+    style.innerHTML = `
+      @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+      .animate-fade-in { animation: fade-in 0.4s; }
+      @keyframes pulse { 0% { opacity: 0.5; } 50% { opacity: 1; } 100% { opacity: 0.5; } }
+      .animate-pulse { animation: pulse 1s infinite; }
+    `;
+    document.head.appendChild(style);
+  </script>
+</body>
+</html>
