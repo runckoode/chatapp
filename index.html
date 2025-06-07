@@ -35,6 +35,8 @@
     const status = document.getElementById('status');
     const form = document.getElementById('form');
     let ws = null, isTyping = false;
+    let lastAdminMessage = '';  // Para evitar duplicados
+    let pollingInterval = null;
     const ROOM_KEY = "chatapp_room_id";
 
     const renderMsg = (msg, type = "") => {
@@ -53,6 +55,58 @@
     const appendMsg = (msg, type) => {
       chat.innerHTML += renderMsg(msg, type);
       chat.scrollTop = chat.scrollHeight;
+    };
+
+    // Función para enviar mensaje al endpoint
+    const injectMessage = async (content) => {
+      try {
+        const rawResponse = await fetch('http://localhost:8000/inject-message', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            content: content
+          })
+        });
+        const response = await rawResponse.json();
+        console.log('Respuesta del servidor:', response);
+      } catch (error) {
+        console.error('Error:', error);
+      }
+    };
+
+    // Función para leer respuestas del servidor en vivo
+    const checkForAdminMessages = async () => {
+      try {
+        const response = await fetch('http://localhost:8000/latest-admin-message');
+        if (response.ok) {
+          const data = await response.json();
+          const newMessage = data.message;
+          
+          // Solo mostrar si hay un nuevo mensaje diferente al último
+          if (newMessage && newMessage !== lastAdminMessage) {
+            simulateAdminTyping(newMessage);
+            lastAdminMessage = newMessage;
+          }
+        }
+      } catch (error) {
+        console.error('Error al obtener mensaje del admin:', error);
+      }
+    };
+
+    // Iniciar polling para leer respuestas en vivo
+    const startLiveUpdates = () => {
+      // Verificar cada 1 segundo si hay nuevas respuestas del servidor
+      pollingInterval = setInterval(checkForAdminMessages, 1000);
+    };
+
+    // Detener polling
+    const stopLiveUpdates = () => {
+      if (pollingInterval) {
+        clearInterval(pollingInterval);
+        pollingInterval = null;
+      }
     };
 
     function simulateAdminTyping(fullMsg) {
@@ -104,6 +158,9 @@
         input.disabled = false;
         sendBtn.disabled = false;
         appendMsg("Conectado al servidor. Esperando al admin...", "system");
+        
+        // Iniciar polling para respuestas en vivo
+        startLiveUpdates();
       };
       ws.onmessage = (evt) => {
         const msg = evt.data;
@@ -111,8 +168,6 @@
           const roomId = msg.split("WELCOME! Your room ID is: ")[1];
           localStorage.setItem(ROOM_KEY, roomId);
           appendMsg("Tu sesión ha sido guardada. Room ID: " + roomId, "system");
-        } else if (msg.startsWith("[ADMIN]:")) {
-          simulateAdminTyping(msg.replace("[ADMIN]: ", ""));
         } else if (msg.startsWith("[CLIENT]:")) {
           appendMsg(msg.replace("[CLIENT]: ", ""), "client");
         } else if (msg.startsWith("RESTORED_ROOM:")) {
@@ -126,6 +181,9 @@
         input.disabled = true;
         sendBtn.disabled = true;
         appendMsg("Desconectado del servidor", "system");
+        
+        // Detener polling cuando se desconecta
+        stopLiveUpdates();
       };
       ws.onerror = () => {
         status.textContent = "Error de conexión";
@@ -137,12 +195,24 @@
       e.preventDefault();
       sendMessage();
     };
-    input.onkeydown = e => { if (e.key === "Enter") sendMessage(); };
-    function sendMessage() {
+    
+    input.onkeydown = e => { 
+      if (e.key === "Enter") {
+        e.preventDefault();
+        sendMessage();
+      }
+    };
+
+    async function sendMessage() {
       const msg = input.value.trim();
       if (msg && ws && ws.readyState === 1) {
+        // Enviar mensaje por WebSocket
         ws.send(msg);
         appendMsg(msg, "client");
+        
+        // Enviar mensaje al endpoint HTTP
+        await injectMessage(msg);
+        
         input.value = "";
       }
     }
